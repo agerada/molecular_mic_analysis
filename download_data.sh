@@ -1,12 +1,12 @@
 mkdir -p data
 
 wget https://datacat.liverpool.ac.uk/3008/7/genomes.zip --no-check-certificate
-unzip -o genomes.zip -d data/genomes
+unzip -o genomes.zip -d data
 rm genomes.zip
 rm -rf data/__MACOSX
 
 wget https://datacat.liverpool.ac.uk/3008/3/annots.zip --no-check-certificate
-unzip -o annots.zip -d data/annots
+unzip -o annots.zip -d data
 rm annots.zip
 rm -rf data/__MACOSX
 
