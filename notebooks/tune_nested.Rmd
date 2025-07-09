@@ -112,7 +112,7 @@ if (!dir.exists(arguments$args[[3]])) {
 
 if (!is.null(opt$output)) {
   if (!dir.exists(opt$output)) {
-    stop("Output directory does not exist")
+    dir.create(opt$output, recursive = TRUE)
   }
 }
 
