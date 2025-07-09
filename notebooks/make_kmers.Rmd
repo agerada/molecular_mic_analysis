@@ -96,7 +96,7 @@ if (!dir.exists(arguments$args[[2]])) {
 
 if (!is.null(opt$output)) {
   if (!dir.exists(opt$output)) {
-    stop("Output directory does not exist")
+    dir.create(opt$output, recursive = TRUE)
   }
 }
 
@@ -121,7 +121,7 @@ set.seed(opt$seed)
 db_path <- arguments$args[[1]]
 genomes_dir <- arguments$args[[2]]
 if (!is.null(opt$output)) {
-  setwd(opt$output)
+  output_dir <- opt$output
 }
 ```
 
@@ -156,7 +156,7 @@ if (verbose) {
   message(paste(all_abx, collapse = ","))
   message("Genomes directory: ", genomes_dir)
   message("Database directory: ", db_path)
-  message("Output directory: ", getwd())
+  message("Output directory: ", output_dir)
   message("Seed: ", opt$seed)
   message("K-mer value: ", opt$kmer)
   message("Squeezing kmers: ", opt$squeeze)
@@ -181,7 +181,7 @@ chunk_msg("Making kmer sparse matrix (libsvm)..")
 with_progress({
     x <- MIC::genomes_to_kmer_libsvm(
     source_dir = genomes_dir,
-    target_dir = file.path(getwd(), paste0("kmers_", opt$kmer)),
+    target_dir = file.path(output_dir, paste0("kmers_", opt$kmer)),
     k = opt$kmer,
     canonical = TRUE,
     squeeze = opt$squeeze)},
@@ -201,7 +201,8 @@ if (!is.null(opt$antibiotics)) {
 
   chunk_msg("Organising kmers into antibiotic subdirectories..")
   filenames <- list.files(
-    paste0("kmers_", opt$kmer),
+    file.path(output_dir,
+      paste0("kmers_", opt$kmer)),
     full.names = TRUE,
     pattern = "*.txt",
     recursive = FALSE)
@@ -220,11 +221,11 @@ if (!is.null(opt$antibiotics)) {
           file_ext = ".txt",
           split = 1.0,
           train_target_path = file.path(
-            paste0("kmers_", opt$kmer), abx, "train.txt"),
+            output_dir, paste0("kmers_", opt$kmer), abx, "train.txt"),
           test_target_path = file.path(
-            paste0("kmers_", opt$kmer), abx, "test.txt"),
+            output_dir, paste0("kmers_", opt$kmer), abx, "test.txt"),
           names_backup = file.path(
-            paste0("kmers_", opt$kmer), abx, "names.csv"),
+            output_dir, paste0("kmers_", opt$kmer), abx, "names.csv"),
           overwrite = FALSE)
       }, enable = TRUE)
 
