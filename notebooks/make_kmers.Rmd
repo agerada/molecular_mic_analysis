@@ -1,0 +1,238 @@
+```{r setup, include=FALSE}
+interactive <- FALSE
+
+## if running as interactive notebook mode (rather than script), enter the
+## following parameters manually:
+
+
+genomes_dir <- "path/to/genomes"
+db_path <- "path/to/db"
+kmer <- 3
+output <- "path/to/output"
+antibiotics <- "all"
+seed <- 42
+squeeze <- FALSE
+```
+
+
+```{r wrap-args, include=FALSE}
+if (interactive) {
+  opt <- list(
+    kmer = kmer,
+    output = output,
+    antibiotics = antibiotics,
+    seed = seed,
+    squeeze = squeeze
+  )
+  arguments <- list(
+    args = list(db_path, genomes_dir),
+    options = opt
+  )
+}
+```
+
+```{r setup-imports, include=FALSE}
+suppressPackageStartupMessages({
+  library(MIC)
+  library(Biostrings)
+  library(furrr)
+  library(progressr)
+  library(data.table)
+  library(xgboost)
+  library(tidyverse)
+  library(AMR)
+  library(caret)
+  library(pryr)
+  library(cli)
+  library(optparse)
+})
+message("Imports complete")
+```
+
+```{r set-default-options, include=FALSE}
+verbose <- TRUE
+
+# antibiotics to iterate through
+avail_abx <- c(
+  "AMC", "AMK", "AMX", "CAZ", "CHL", "CIP", "FEP", "GEN", "MEM", "TGC")
+all_abx <- c(
+  "AMC", "AMK", "AMX", "CAZ", "CHL", "CIP", "FEP", "GEN", "MEM", "TGC")
+```
+
+```{r get-command-args, include=FALSE}
+if (!interactive) {
+  option_list <- list(
+    make_option(c("-k", "--kmer"), type = "integer", default = 3,
+                help = "k-mer value to use"),
+    make_option(c("-o", "--output"), type = "character",
+                help = "Path to store output files"),
+    make_option(c("-a", "--antibiotics"), type = "character",
+                help = "Antibiotics to process into subdirs,
+                all, or comma-separated list of abx codes [default = none]"),
+    make_option(c("-s", "--seed"), type = "integer", default = 42,
+                help = "Seed for reproducibility [default = 42]"),
+    make_option(c("-q", "--squeeze"), action="store_true", default=FALSE,
+                help = "Squeeze kmers i.e., drop non-canonical mers")
+  )
+  
+  arguments <- parse_args(
+    OptionParser(option_list = option_list,
+    usage = "Usage: %prog [options] db_path genomes_dir"),
+    positional_arguments = 2)
+  
+  opt <- arguments$options
+}
+```
+
+```{r check-args}
+if (!file.exists(arguments$args[[1]])) {
+  stop("Database directory does not exist")
+}
+
+if (!dir.exists(arguments$args[[2]])) {
+  stop("Genomes directory does not exist")
+}
+
+
+if (!is.null(opt$output)) {
+  if (!dir.exists(opt$output)) {
+    stop("Output directory does not exist")
+  }
+}
+
+if (!is.null(opt$antibiotics)) {
+  if (opt$antibiotics == "all") {
+    all_abx <- avail_abx
+  } else {
+    all_abx <- strsplit(opt$antibiotics, ",")[[1]]
+  }
+  if (any(!all_abx %in% avail_abx)) {
+    stop("Invalid antibiotics")
+  }
+}
+```
+
+```{r setup-settings, include=FALSE}
+plan(multisession, workers = availableCores())
+set.seed(opt$seed)
+```
+
+```{r setup-paths}
+db_path <- arguments$args[[1]]
+genomes_dir <- arguments$args[[2]]
+if (!is.null(opt$output)) {
+  setwd(opt$output)
+}
+```
+
+```{r def-global-funs}
+clean_up_genome_name <- function(x) {
+  basename(tools::file_path_sans_ext(x))
+}
+
+chunk_msg <- function(msg) {
+  if (verbose) {
+    message(col_yellow(msg))
+  }
+}
+
+memory_usage <- function(format = "GB") {
+  mem <- pryr::mem_used() |> as.numeric()
+  paste(
+    switch(format,
+         "GB" = mem / 1e9,
+         "MB" = mem / 1e6,
+         "KB" = mem / 1e3,
+         "B" = mem),
+    format)
+}
+```
+
+```{r verbose-update-before-work}
+if (verbose) {
+  chunk_msg("Working using the following input parameters/options:")
+  message("Memory usage before work: ", memory_usage())
+  message("Working on ", length(all_abx), " antibiotics")
+  message(paste(all_abx, collapse = ","))
+  message("Genomes directory: ", genomes_dir)
+  message("Database directory: ", db_path)
+  message("Output directory: ", getwd())
+  message("Seed: ", opt$seed)
+  message("K-mer value: ", opt$kmer)
+  message("Squeezing kmers: ", opt$squeeze)
+}
+```
+
+```{r load-meta-data}
+chunk_msg("Loading meta data from database..")
+if (tools::file_ext(db_path) == "rds") {
+  all_meta_adjusted <- read_rds(db_path)
+  if (!inherits(all_meta_adjusted, "tidy_patric_db")) {
+    stop("Database does not appear to be a tidy_patric_db object")
+  }
+} else {
+  all_meta_adjusted <- tidy_patric_meta_data(load_patric_db(db_path))
+}
+```
+
+
+```{r make-kmers-sparse, eval=TRUE}
+chunk_msg("Making kmer sparse matrix (libsvm)..")
+with_progress({
+    x <- MIC::genomes_to_kmer_libsvm(
+    source_dir = genomes_dir,
+    target_dir = file.path(getwd(), paste0("kmers_", opt$kmer)),
+    k = opt$kmer,
+    canonical = TRUE,
+    squeeze = opt$squeeze)},
+  enable = TRUE
+)
+```
+
+```{r check-stop-after-make-kmers}
+if (is.null(opt$antibiotics)) {
+  chunk_msg("Kmers made, no abx subdirs requested, stopping.")
+  q()
+}
+```
+
+```{r make-kmer-subdirs}
+if (!is.null(opt$antibiotics)) {
+
+  chunk_msg("Organising kmers into antibiotic subdirectories..")
+  filenames <- list.files(
+    paste0("kmers_", opt$kmer),
+    full.names = TRUE,
+    pattern = "*.txt",
+    recursive = FALSE)
+  genome_ids <- sapply(filenames, clean_up_genome_name)
+  genome_ids <- unname(genome_ids)
+
+  for (abx in all_abx) {
+    message("Processing:", abx)
+    all_mics <- get_mic(
+      all_meta_adjusted,
+      genome_ids, paste0("mic_", abx))
+
+      with_progress({
+        MIC::split_and_combine_files(
+          path_to_files = filenames[!is.na(all_mics)],
+          file_ext = ".txt",
+          split = 1.0,
+          train_target_path = file.path(
+            paste0("kmers_", opt$kmer), abx, "train.txt"),
+          test_target_path = file.path(
+            paste0("kmers_", opt$kmer), abx, "test.txt"),
+          names_backup = file.path(
+            paste0("kmers_", opt$kmer), abx, "names.csv"),
+          overwrite = FALSE)
+      }, enable = TRUE)
+
+  }
+}
+```
+
+```{r stop-after-make-kmer-subdirs, eval=TRUE}
+chunk_msg("Kmers made and organised into subdirs, stopping.")
+q()
+```
