@@ -58,7 +58,7 @@ with the following structure:
 
 This repository uses
 [`renv`](https://rstudio.github.io/renv/articles/renv.html) to manage
-dependencies. To install the dependencies, run:
+dependencies. To install the dependencies, start R and run:
 
 ``` r
 renv::restore()
