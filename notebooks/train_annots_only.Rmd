@@ -3,16 +3,18 @@ interactive <- FALSE
 
 ## if running as interactive notebook mode (rather than script), enter the
 ## following parameters manually:
-annots_dir <- "path/to/annotations"
-db_path <- "path/to/database"
-kmers_dir <- "path/to/kmers"
+
+annots_dir <- "/path/to/annotations"
+db_path <- "/path/to/database"
+kmers_dir <- getwd()
 kmer <- 3
-output <- "path/to/output"
 antibiotics <- "all"
+output <- getwd()
 seed <- 42
-folds <- 3
-rounds <- 50
-eta <- 2 / 50
+folds <- 5
+rounds <- 1000
+eta <- 2 / 1000
+early_stop <- 10
 pre_fold_info <- NULL
 ```
 
@@ -26,6 +28,7 @@ if (interactive) {
     folds = folds,
     rounds = rounds,
     eta = eta,
+    early_stop = early_stop,
     pre_fold_info = pre_fold_info
   )
   arguments <- list(
@@ -53,7 +56,7 @@ suppressPackageStartupMessages({
 message("Imports complete")
 ```
 
-```{r set-default-options, include=FALSE}
+```{r set-options, include=FALSE}
 verbose <- TRUE
 
 # antibiotics to iterate through
@@ -61,6 +64,22 @@ avail_abx <- c(
   "AMC", "AMK", "AMX", "CAZ", "CHL", "CIP", "FEP", "GEN", "MEM", "TGC")
 all_abx <- c(
   "AMC", "AMK", "AMX", "CAZ", "CHL", "CIP", "FEP", "GEN", "MEM", "TGC")
+
+# default parameters for kmer model
+default_params_kmer <- list(
+  max_depth = 4,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
+
+# default parameters for annots model
+default_params_annots <- list(
+  max_depth = 10,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
 ```
 
 ```{r get-command-args, include=FALSE}
@@ -75,12 +94,14 @@ if (!interactive) {
                 all, or comma-separated list of abx codes [default = none]"),
     make_option(c("-s", "--seed"), type = "integer", default = 42,
                 help = "Seed for reproducibility [default = 42]"),
-    make_option(c("-f", "--folds"), type = "integer", default = 3,
-                help = "Number of folds for cross-validation [default = 3]"),
-    make_option(c("-r", "--rounds"), type = "integer", default = 50,
-                help = "Number of rounds for xgboost [default = 50]"),
-    make_option(c("-e", "--eta"), type = "numeric", default = 2 / 50,
-                help = "Learning rate for xgboost [default = 0.04]"),
+    make_option(c("-f", "--folds"), type = "integer", default = 5,
+                help = "Number of folds for cross-validation [default = 5]"),
+    make_option(c("-r", "--rounds"), type = "integer", default = 1000,
+                help = "Number of rounds for xgboost [default = 1000]"),
+    make_option(c("-e", "--eta"), type = "numeric", default = 2 / 1000,
+                help = "Learning rate for xgboost [default = 0.002]"),
+    make_option("--early_stop", type = "integer", default = 10,
+                help = "Early stopping rounds [default = 10]"),
     make_option(c("--pre_fold_info"), type = "character",
                 help = "Path to precomputed fold information [default = none]
                         .RDS from previous run")
@@ -205,17 +226,13 @@ if (verbose) {
   message(paste(all_abx, collapse = ","))
   message("Kmers directory: ", kmers_dir)
   message("Database directory: ", db_path)
-  message("Output directory: ", outpath)
+  message("Output directory: ", getwd())
   message("Seed: ", opt$seed)
   message("K-mer value: ", opt$kmer)
-  if (!is.null(opt$pre_fold_info)) {
-    message("Precomputed fold information: ", opt$pre_fold_info)
-    warning("Pre-fold info file provided, therefore --folds will be ignored")
-  } else {
-    message("Number of folds: ", opt$folds)
-  }
+  message("Number of folds: ", opt$folds)
   message("Number of rounds: ", opt$rounds)
   message("Learning rate: ", opt$eta)
+  message("Early stopping rounds: ", opt$early_stop)
 }
 ```
 
@@ -287,33 +304,44 @@ write_rds(annots_mat, file.path(outpath, paste0(prefix, "annots_mat.rds")))
 ```{r make-folds}
 if (!is.null(opt$pre_fold_info)) {
   chunk_msg("Loading precomputed fold information..")
-  folds_tune_genome_names <- read_rds(opt$pre_fold_info)
-  folds_tune <- list()
-  # convert genome names to genome ids
-  for (i in seq_along(folds_tune_genome_names)) {
-    abx <- all_abx[[i]]
+  folds_train_genome_names <- read_rds(opt$pre_fold_info)
+  if (!all(all_abx %in% names(folds_train_genome_names))) {
+    stop("Some antibiotics are missing in the pre-fold information")
+  }
+  folds_train <- list()
+  for (abx in all_abx) {
     if (file.exists(kmer_abx_names(abx))) {
       genome_ids <- read_csv(
         kmer_abx_names(abx),
         col_types = cols(.default = "c"))
       genome_ids <- genome_ids$name
       genome_ids <- clean_up_genome_name(genome_ids)
-      
-      folds_tune[[abx]] <- lapply(folds_tune_genome_names[[abx]], \(x) {
-        match(x, genome_ids)
-      })
-      
     } else {
       genome_ids <- rownames(annots_mat)
-      folds_tune[[abx]] <- lapply(folds_tune_genome_names[[abx]], \(x) {
-        match(x, genome_ids)
-      })
+    }
+    # Check if all genome names are present
+    all_genomes_in_folds <- unlist(folds_train_genome_names[[abx]])
+    if (!all(all_genomes_in_folds %in% genome_ids)) {
+      stop(paste("Some genome names in pre-fold information for", abx, "are not in the current genome_ids"))
+    }
+    # Convert genome names to indices
+    folds_train[[abx]] <- lapply(folds_train_genome_names[[abx]], \(x) {
+      match(x, genome_ids)
+    })
+    # Check number of folds
+    if (length(folds_train[[abx]]) != opt$folds) {
+      stop(paste("Number of folds in pre-fold information for", abx, "does not match --folds"))
+    }
+    # Check if folds partition the data correctly
+    all_indices <- unlist(folds_train[[abx]])
+    if (length(all_indices) != length(genome_ids) || any(duplicated(all_indices))) {
+      stop(paste("Pre-fold information for", abx, "does not correctly partition the data"))
     }
   }
 } else {
-  chunk_msg("Making tuning cross-validation folds..")
-  folds_tune <- list()
-  folds_tune_genome_names <- list()
+  chunk_msg("Making cross-validation folds..")
+  folds_train <- list()
+  folds_train_genome_names <- list()
   for (i in seq_along(all_abx)) {
     abx <- all_abx[i]
     message("Making folds:", abx)
@@ -321,7 +349,7 @@ if (!is.null(opt$pre_fold_info)) {
       message(
         "kmer data appears to be present, will use kmer order to create folds")
       genome_ids <- read_csv(
-        kmer_abx_names(abx),
+        file.path(kmer_abx_names(abx)),
         col_types = cols(.default = "c"))
       genome_ids <- genome_ids$name
       genome_ids <- clean_up_genome_name(genome_ids)
@@ -351,39 +379,129 @@ if (!is.null(opt$pre_fold_info)) {
       mic_uncensor() %>%
       log2()
   
-    folds_tune[[abx]] <- caret::createFolds(
+    folds_train[[abx]] <- caret::createFolds(
       labels, k = opt$folds, list = TRUE)
     
-    folds_tune_genome_names[[abx]] <- lapply(folds_tune[[abx]], \(x) {
+    folds_train_genome_names[[abx]] <- lapply(folds_train[[abx]], \(x) {
       genome_ids[x]
     })
   }
 }
 
-write_rds(folds_tune, file.path(outpath, paste0(prefix, "folds_tune.rds")))
-write_rds(folds_tune_genome_names, file.path(outpath, paste0(prefix, "folds_tune_genome_names.rds")))
+write_rds(folds_train, file.path(outpath, paste0(prefix, "folds_train.rds")))
+write_rds(folds_train_genome_names, file.path(outpath, paste0(prefix, "folds_train_genome_names.rds")))
 ```
 
-```{r tune-kmer, eval=TRUE}
-chunk_msg("Tuning kmer models..")
+```{r load-best-params-kmer, eval=FALSE}
+chunk_msg("Loading best kmer parameters..")
+if (any(!file.exists(
+  file.path(outpath, paste0(prefix, "step1_tune_kmer.rds")),
+  file.path(outpath, paste0(prefix, "step2_tune_kmer.rds"))))) {
+  message(
+    "Kmer tuning results not found.
+    Missing step1_tune_kmer.rds or step2_tune_kmer.rds")
+  message("Using default parameters:")
+  message(
+    paste(
+      names(default_params_kmer),
+      default_params_kmer, sep = ":", collapse = "\n"))
+  tuned_params_kmers <- map(all_abx, \(x) default_params_kmer)
+  names(tuned_params_kmers) <- all_abx
+} else {
+  step1_tune_kmer <- read_rds(file.path(outpath,
+                                        paste0(prefix, "step1_tune_kmer.rds")))
+  step2_tune_kmer <- read_rds(file.path(outpath,
+                                        paste0(prefix, "step2_tune_kmer.rds")))
+
+  tuned_params_kmers <- map2(step1_tune_kmer, step2_tune_kmer, \(x, y) {
+    best_step1 <- x %>%
+      sapply(\(x) {
+        x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]
+        }) %>%
+      unlist %>%
+      which.min
+    best_max_depth <- x[[best_step1]]$params[["max_depth"]]
+    best_min_child_weight <- x[[best_step1]]$params[["min_child_weight"]]
+
+    best_step2 <- y %>%
+    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
+      unlist %>%
+      which.min
+
+    best_subsample <- y[[best_step2]]$params[["subsample"]]
+    best_colsample_bytree <- y[[best_step2]]$params[["colsample_bytree"]]
+    list(
+      max_depth = best_max_depth,
+      min_child_weight = best_min_child_weight,
+      subsample = best_subsample,
+      colsample_bytree = best_colsample_bytree)
+  })
+}
+```
+
+```{r load-best-params-annots, eval=TRUE}
+chunk_msg("Loading best annotations parameters..")
+if (any(!file.exists(
+  file.path(outpath, paste0(prefix, "step1_tune_annots.rds")),
+  file.path(outpath, paste0(prefix, "step2_tune_annots.rds"))))) {
+  message("Annots tuning results not found")
+  message("Tuning files need to be in the output directory")
+  message("Using default parameters:")
+  message(
+    paste(
+        names(default_params_annots),
+        default_params_annots,
+        sep = ":",
+        collapse = "\n"))
+
+  tuned_params_annots <- map(all_abx, \(x) default_params_annots)
+  names(tuned_params_annots) <- all_abx
+} else {
+  step1_tune_annots <- read_rds(file.path(outpath, paste0(prefix, "step1_tune_annots.rds")))
+  step2_tune_annots <- read_rds(file.path(outpath, paste0(prefix, "step2_tune_annots.rds")))
+
+  tuned_params_annots <- map2(step1_tune_annots, step2_tune_annots, \(x, y) {
+    best_step1 <- x %>%
+      sapply(\(x) {
+        x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]
+        }) %>%
+      unlist %>%
+      which.min
+    best_max_depth <- x[[best_step1]]$params[["max_depth"]]
+    best_min_child_weight <- x[[best_step1]]$params[["min_child_weight"]]
+
+    best_step2 <- y %>%
+    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
+      unlist %>%
+      which.min
+
+    best_subsample <- y[[best_step2]]$params[["subsample"]]
+    best_colsample_bytree <- y[[best_step2]]$params[["colsample_bytree"]]
+    list(
+      max_depth = best_max_depth,
+      min_child_weight = best_min_child_weight,
+      subsample = best_subsample,
+      colsample_bytree = best_colsample_bytree)
+  })
+}
+```
+
+```{r train-models-kmers, eval=FALSE}
+chunk_msg("Training kmer models..")
 for (i in seq_along(all_abx)) {
   abx <- all_abx[i]
+  message(paste("Fitting:", abx))
   message("Flushing memory of old loaded data..")
   suppressWarnings(
     remove("dtrain")
   )
   gc()
-  message("Tuning kmers:", abx)
+
   train_path <- kmer_abx_train(abx)
   names_path <- kmer_abx_names(abx)
-
   genome_ids <- read_csv(names_path, col_types = cols(.default = "c"))
   genome_ids <- genome_ids$name
   genome_ids <- clean_up_genome_name(genome_ids)
-
-  ## step 1 tuning, subsample and colsample
-  step1_params <- expand.grid(max_depth = c(2, 3, 4, 5),
-                            min_child_weight = c(1, 5, 10))
 
   mics <- get_mic(
     all_meta_adjusted,
@@ -396,92 +514,61 @@ for (i in seq_along(all_abx)) {
   message("Loading kmer data..")
   dtrain <- xgb.DMatrix(data = train_path, label = labels)
   message("Memory usage after loading kmer data:", memory_usage())
+  print("Training matrix:")
+  print(dtrain)
+  message("Training a kmer model")
+  model_log_kmer[[abx]] <- xgb.cv(
+    data = dtrain,
+    max_depth = tuned_params_kmers[[i]]$max_depth,
+    min_child_weight = tuned_params_kmers[[i]]$min_child_weight,
+    subsample = tuned_params_kmers[[i]]$subsample,
+    colsample_bytree = tuned_params_kmers[[i]]$colsample_bytree,
+    prediction = TRUE,
+    folds = folds_train[[abx]],
+    nrounds = opt$rounds,
+    eta = opt$eta,
+    early_stopping_rounds = opt$early_stop,
+    print_every_n = 10,
+    callbacks = list(cb.cv.predict(save_models = TRUE))
+  )
 
-  step1_tune_inner <- apply(step1_params, 1, function(x) {
-    max_depth <- x[["max_depth"]]
-    min_child_weight <- x[["min_child_weight"]]
-    print(
-      paste(
-        "max_depth:", max_depth,
-        "; min_child_weight: ", min_child_weight))
-
-    m <- xgb.cv(
-      data = dtrain,
-      nrounds = opt$rounds,
-      eta = opt$eta,
-      max_depth = max_depth,
-      min_child_weight = min_child_weight,
-      folds = folds_tune[[abx]]
-    )
-    print(paste("Current memory usage:", memory_usage()))
-    m
+  predictions_kmer_log[[abx]] <- lapply(folds_train[[abx]], \(x) {
+    2 ** model_log_kmer[[abx]][["pred"]][x]
   })
 
-  step1_tune_kmer[[abx]] <- step1_tune_inner
-
-  eval_log <- step1_tune_inner %>%
-    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
-    unlist
-
-  step1_param_results <- step1_params
-  step1_param_results$eval_rmse <- eval_log
-  best_max_depth <- step1_param_results[which.min(eval_log), "max_depth"]
-  best_min_child_weight <- step1_param_results[which.min(
-    eval_log), "min_child_weight"]
-
-  write_rds(step1_tune_kmer, file.path(outpath, paste0(prefix, "step1_tune_kmer.rds")))
-
-  ## step 2 tuning, subsample and colsample
-  step2_params <- expand.grid(subsample = c(0.5, 0.75, 1),
-                            colsample_bytree = c(0.4, 0.6, 0.8, 1))
-
-  step2_tune_inner <- apply(step2_params, 1, function(x) {
-    subsample <- x[["subsample"]]
-    colsample_bytree <- x[["colsample_bytree"]]
-    print(
-      paste(
-        "subsample:", subsample,
-        "; colsample_bytree:", colsample_bytree))
-
-    m <- xgb.cv(
-      data = dtrain,
-      nrounds = opt$rounds,
-      max_depth = best_max_depth,
-      min_child_weight = best_min_child_weight,
-      eta = opt$eta,
-      subsample = subsample,
-      colsample_bytree = colsample_bytree,
-      folds = folds_tune[[abx]],
-      print_every_n = 10
-    )
-    print(paste("Current memory usage:", memory_usage()))
-    m
+  ea_kmer_log[[abx]] <- lapply(folds_train[[abx]], \(x) {
+    pred <- 2 ** model_log_kmer[[abx]][["pred"]][x]
+    true <- get_mic(all_meta_adjusted, genome_ids[x], paste0("mic_", abx))
+    compare_mic(gold_standard = true, test = pred)
   })
 
-  step2_tune_kmer[[abx]] <- step2_tune_inner
-
-  eval_log <- step2_tune_inner %>%
-    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
-    unlist
-  step2_param_results <- step2_params
-  step2_param_results$eval_rmse <- eval_log
-
-  write_rds(step2_tune_kmer, file.path(outpath, paste0(prefix, "step2_tune_kmer.rds")))
+  write_rds(
+    model_log_kmer,
+    file.path(outpath,
+              paste0(prefix, "model_log_kmer.rds")))
+  write_rds(
+    predictions_kmer_log,
+    file.path(outpath,
+              paste0(prefix, "predictions_kmer_log.rds")))
+  write_rds(
+    ea_kmer_log,
+    file.path(outpath,
+              paste0(prefix, "ea_kmer_log.rds")))
 }
 ```
 
-```{r tune-annots, eval=TRUE}
-chunk_msg("Tuning annotations models..")
+```{r train-models-annots, eval=TRUE}
+chunk_msg("Training annotations models..")
 for (i in seq_along(all_abx)) {
   abx <- all_abx[i]
-  message("Tuning annots:", abx)
+  message("Fitting annotations:", abx)
 
   if (file.exists(kmer_abx_names(abx))) {
     message("kmer data appears to be present, will try to match annotations data
     to the same order..")
-    genome_ids <- suppressMessages(
-      read_csv(kmer_abx_names(abx))
-    )
+    genome_ids <- read_csv(
+      kmer_abx_names(abx),
+      col_types = cols(.default = "c"))
     genome_ids <- genome_ids$name
     genome_ids <- clean_up_genome_name(genome_ids)
     annots_mat_filtered <- annots_mat[match(genome_ids, rownames(annots_mat)), ]
@@ -493,10 +580,6 @@ for (i in seq_along(all_abx)) {
     annots_mat_filtered <- annots_mat %>%
       subset(!is.na(all_mics))
   }
-
-  ## step 1 tuning, subsample and colsample
-  step1_params <- expand.grid(max_depth = c(4, 6, 8, 10),
-                            min_child_weight = c(1, 5, 10))
 
   mics <- get_mic(
     all_meta_adjusted,
@@ -510,80 +593,51 @@ for (i in seq_along(all_abx)) {
 
   dtrain <- xgb.DMatrix(data = annots_mat_filtered, label = labels)
 
-  step1_tune_inner <- apply(step1_params, 1, function(x) {
-    max_depth <- x[["max_depth"]]
-    min_child_weight <- x[["min_child_weight"]]
-    print(
-      paste("max_depth:", max_depth,
-      "; min_child_weight: ", min_child_weight))
+  message("Training an annotations model")
+  model_log_annots[[abx]] <- xgb.cv(
+    data = dtrain,
+    max_depth = tuned_params_annots[[i]]$max_depth,
+    min_child_weight = tuned_params_annots[[i]]$min_child_weight,
+    subsample = tuned_params_annots[[i]]$subsample,
+    colsample_bytree = tuned_params_annots[[i]]$colsample_bytree,
+    prediction = TRUE,
+    folds = folds_train[[abx]],
+    nrounds = opt$rounds,
+    eta = opt$eta,
+    early_stopping_rounds = opt$early_stop,
+    print_every_n = 10,
+    callbacks = list(cb.cv.predict(save_models = TRUE))
+  )
 
-    m <- xgb.cv(
-      data = dtrain,
-      nrounds = opt$rounds,
-      eta = opt$eta,
-      max_depth = max_depth,
-      min_child_weight = min_child_weight,
-      folds = folds_tune[[abx]],
-      print_every_n = 10
-    )
-    print(paste("Current memory usage:", memory_usage()))
-    m
+  predictions_annots_log[[abx]] <- lapply(folds_train[[abx]], \(x) {
+    2 ** model_log_annots[[abx]][["pred"]][x]
   })
 
-  step1_tune_annots[[abx]] <- step1_tune_inner
-
-  eval_log <- step1_tune_inner %>%
-    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
-    unlist
-
-  step1_param_results <- step1_params
-  step1_param_results$eval_rmse <- eval_log
-  best_max_depth <- step1_param_results[which.min(eval_log), "max_depth"]
-  best_min_child_weight <- step1_param_results[which.min(
-    eval_log), "min_child_weight"]
-
-  write_rds(step1_tune_annots, file.path(outpath, paste0(prefix, "step1_tune_annots.rds")))
-
-  ## step 2 tuning, subsample and colsample
-  step2_params <- expand.grid(subsample = c(0.5, 0.75, 1),
-                            colsample_bytree = c(0.4, 0.6, 0.8, 1))
-
-  step2_tune_inner <- apply(step2_params, 1, function(x) {
-    subsample <- x[["subsample"]]
-    colsample_bytree <- x[["colsample_bytree"]]
-    print(
-      paste(
-        "subsample:", subsample,
-        "; colsample_bytree: ", colsample_bytree))
-
-    m <- xgb.cv(
-      data = dtrain,
-      nrounds = opt$rounds,
-      max_depth = best_max_depth,
-      min_child_weight = best_min_child_weight,
-      eta = opt$eta,
-      subsample = subsample,
-      colsample_bytree = colsample_bytree,
-      folds = folds_tune[[abx]],
-      print_every_n = 10
-    )
-    print(paste("Current memory usage:", memory_usage()))
-    m
+  ea_annots_log[[abx]] <- lapply(folds_train[[abx]], \(x) {
+    pred <- 2 ** model_log_annots[[abx]][["pred"]][x]
+    true <- get_mic(
+      all_meta_adjusted,
+      rownames(annots_mat_filtered)[x],
+      paste0("mic_", abx))
+    compare_mic(gold_standard = true, test = pred)
   })
 
-  step2_tune_annots[[abx]] <- step2_tune_inner
-
-  eval_log <- step2_tune_inner %>%
-    sapply(\(x) x$evaluation_log[nrow(x$evaluation_log), "test_rmse_mean"]) %>%
-    unlist
-  step2_param_results <- step2_params
-  step2_param_results$eval_rmse <- eval_log
-
-  write_rds(step2_tune_annots, file.path(outpath, paste0(prefix, "step2_tune_annots.rds")))
+  write_rds(
+    model_log_annots,
+    file.path(outpath,
+              paste0(prefix, "model_log_annots.rds")))
+  write_rds(
+    predictions_annots_log,
+    file.path(outpath,
+              paste0(prefix, "predictions_annots_log.rds")))
+  write_rds(
+    ea_annots_log,
+    file.path(outpath,
+              paste0(prefix, "ea_annots_log.rds")))
 }
 ```
 
-```{r tune-only-stop}
-chunk_msg("Tuning complete")
+```{r stop-train}
+chunk_msg("Models complete")
 q()
 ```

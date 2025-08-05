@@ -392,7 +392,7 @@ write_rds(folds_train, file.path(outpath, paste0(prefix, "folds_train.rds")))
 write_rds(folds_train_genome_names, file.path(outpath, paste0(prefix, "folds_train_genome_names.rds")))
 ```
 
-```{r load-best-params-kmer, eval=FALSE}
+```{r load-best-params-kmer, eval=TRUE}
 chunk_msg("Loading best kmer parameters..")
 if (any(!file.exists(
   file.path(outpath, paste0(prefix, "step1_tune_kmer.rds")),
@@ -486,7 +486,7 @@ if (any(!file.exists(
 }
 ```
 
-```{r train-models-kmers, eval=FALSE}
+```{r train-models-kmers, eval=TRUE}
 chunk_msg("Training kmer models..")
 for (i in seq_along(all_abx)) {
   abx <- all_abx[i]
