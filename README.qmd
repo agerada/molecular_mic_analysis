@@ -185,20 +185,15 @@ validation_summaries <- lapply(antimicrobials, function(ab) {
     dplyr::bind_rows()
   
   # use MIC package to compare MICs
-  validation <- compare_mic(as.mic(results$gold_standard),
-                            as.mic(results$test))
-  summary(validation)
+  compare_mic(as.mic(results$gold_standard),
+              as.mic(results$test))
 })
 
 names(validation_summaries) <- antimicrobials
-
-validation_summaries |>
-  lapply(as.data.frame) |> 
-  dplyr::bind_rows(.id = "antimicrobial") |>
-  dplyr::select(-bias) |>
-  dplyr::mutate(EA_pcent = round(EA_pcent * 100, 2),
-         EA_pcent = paste0(EA_pcent, "%"),
-         antimicrobial = ab_name(antimicrobial))
+plot(validation_summaries$CIP) +
+  ggplot2::ggtitle("Ciprofloxacin annotation model") +
+  ggplot2::xlab("Agar dilution MIC (mg/L)") +
+  ggplot2::ylab("Predicted MIC (mg/L)")
 ```
 
 ## PGSE
