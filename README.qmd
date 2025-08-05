@@ -102,7 +102,7 @@ with `XGBoost`, which are then used for the $k$-mer models.
 
 Both `tune.R` and `train.R` use "flat" cross-validation; however, `_nested.R`
 variants are available that use nested cross-validation, which is useful if
-external validation data is not available.
+external validation data is not available (the nested variants were not used in this manuscript, as external validation data was available).
 
 Furthermore, `tune_annots_only.R` and `train_annots_only.R` restrict models to annotation models, which can be useful for quick results, as $k$-mer models are generally time-consuming to train and need fairly high memory.
 
@@ -118,12 +118,10 @@ then tune the hyperparameters using `tune.R`, and finally train the models
 using `train.R`. The output is saved in the directory specified by the
 `-o, --output` parameter.
 
-Example scripts are provided, which use the above data to generate $3$-mer models
-for gentamicin and ciprofloxacin. [^justify_k]
+Example scripts are provided, which use the above data to generate annotation and $k$-mer models [^justify_k].
 
 [^justify_k]: Due to the computational demand of running large $k$-mer models,
-$k$ has been kept to 3 and the model limited to two antimicrobials to
-demonstrate the iterative workflow when multiple antimicrobials are tested. In
+$k$ has been kept to 3 in these examples. In
 practice, larger values for $k$ are required to achieve good performance.
 
 ```{bash run-models, eval=run_examples, output=FALSE}

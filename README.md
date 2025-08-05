@@ -123,7 +123,7 @@ finally train the models using `train.R`. The output is saved in the
 directory specified by the `-o, --output` parameter.
 
 Example scripts are provided, which use the above data to generate
-$3$-mer models for gentamicin and ciprofloxacin. [^1]
+annotation and $k$-mer models [^1].
 
 ``` bash
 bash examples/make_mers.sh
@@ -230,7 +230,5 @@ Liverpool, UK
 Liverpool, UK
 
 [^1]: Due to the computational demand of running large $k$-mer models,
-    $k$ has been kept to 3 and the model limited to two antimicrobials
-    to demonstrate the iterative workflow when multiple antimicrobials
-    are tested. In practice, larger values for $k$ are required to
-    achieve good performance.
+    $k$ has been kept to 3 in these examples. In practice, larger values
+    for $k$ are required to achieve good performance.
