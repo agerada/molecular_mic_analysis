@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the values for the -a parameter
-ANTIBIOTICS=("GEN" "CIP")
+ANTIBIOTICS=("CAZ" "CIP" "FEP" "GEN" "MEM")
 
 # Loop through each antibiotic value
 for a in "${ANTIBIOTICS[@]}"; do
@@ -12,7 +12,8 @@ for a in "${ANTIBIOTICS[@]}"; do
         -a "$a" \
         -r 100 \
         -e 0.02 \
-        -f 5 \
+        -f 3 \
+        --pre_fold_info "folds/${a}_folds_tune_genome_names.rds" \
         data/annots/ \
         data/meta_data_bv_brc_format.txt \
         data/kmers/
@@ -26,7 +27,7 @@ for a in "${ANTIBIOTICS[@]}"; do
         -e 0.005 \
         -f 5 \
         --early_stop 10 \
-        --pre_fold_info "output/3/${a}_folds_tune_genome_names.rds" \
+        --pre_fold_info "folds/${a}_folds_train_genome_names.rds" \
         data/annots/ \
         data/meta_data_bv_brc_format.txt \
         data/kmers/
