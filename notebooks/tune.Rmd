@@ -300,13 +300,13 @@ if (!is.null(opt$pre_fold_info)) {
       genome_ids <- clean_up_genome_name(genome_ids)
       
       folds_tune[[abx]] <- lapply(folds_tune_genome_names[[abx]], \(x) {
-        which(genome_ids %in% x)
+        match(x, genome_ids)
       })
       
     } else {
       genome_ids <- rownames(annots_mat)
       folds_tune[[abx]] <- lapply(folds_tune_genome_names[[abx]], \(x) {
-        which(genome_ids %in% x)
+        match(x, genome_ids)
       })
     }
   }
@@ -364,7 +364,7 @@ write_rds(folds_tune, file.path(outpath, paste0(prefix, "folds_tune.rds")))
 write_rds(folds_tune_genome_names, file.path(outpath, paste0(prefix, "folds_tune_genome_names.rds")))
 ```
 
-```{r tune-kmer}
+```{r tune-kmer, eval=TRUE}
 chunk_msg("Tuning kmer models..")
 for (i in seq_along(all_abx)) {
   abx <- all_abx[i]

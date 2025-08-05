@@ -1,21 +1,21 @@
 ```{r setup, include=FALSE}
-interactive <- FALSE
+interactive <- T
 
 ## if running as interactive notebook mode (rather than script), enter the
 ## following parameters manually:
 
-annots_dir <- "/path/to/annotations"
-db_path <- "/path/to/database"
-kmers_dir <- getwd()
+annots_dir <- "../data/annots"
+db_path <- "../data/meta_data_bv_brc_format.txt"
+kmers_dir <- "../data/kmers/"
 kmer <- 3
-antibiotics <- "all"
+antibiotics <- "CIP"
 output <- getwd()
 seed <- 42
 folds <- 5
 rounds <- 1000
 eta <- 2 / 1000
 early_stop <- 10
-pre_fold_info <- NULL
+pre_fold_info <- "~/Library/CloudStorage/OneDrive-TheUniversityofLiverpool/Data/molecularMIC_paper/data/multi_flat/10/CIP_folds_tune_genome_names.rds"
 ```
 
 ```{r wrap-args, include=FALSE}

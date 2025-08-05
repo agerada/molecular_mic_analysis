@@ -3,10 +3,14 @@ Alessandro Gerada
 
 ## Introduction
 
-This is companion code for the ‘Molecular MIC’ manuscript. The code in
-this repository generates $k$-mer and annotation models that predict
-minimum inhibitory concentration (MIC) from whole genome sequence (WGS)
-data.
+This is the companion code for the manuscript by Gerada, Zhong et al,
+titled “Prediction of antimicrobial minimum inhibitory concentration
+from bacterial genomes using a scalable and interpretable machine
+learning approach”.
+
+The code in this repository generates $k$-mer and annotation models that
+predict minimum inhibitory concentration (MIC) from whole genome
+sequence (WGS) data.
 
 ## Data requirements
 
@@ -78,8 +82,8 @@ folder. These can be run interactively by configuring the `setup` chunk:
 2.  configure the parameters in the `setup` chunk.
 
 Alternatively, the notebooks can be converted to scripts and run using
-`Rscript`. A bash script is provided that converts the notebooks to such
-scripts using `knitr`:
+`Rscript` (recommended). A bash script is provided that converts the
+notebooks to such scripts using `knitr`:
 
 ``` bash
 bash make_scripts.sh
@@ -99,6 +103,11 @@ The following scripts are generated:
 Both `tune.R` and `train.R` use “flat” cross-validation; however,
 `_nested.R` variants are available that use nested cross-validation,
 which is useful if external validation data is not available.
+
+Furthermore, `tune_annots_only.R` and `train_annots_only.R` restrict
+models to annotation models, which can be useful for quick results, as
+$k$-mer models are generally time-consuming to train and need fairly
+high memory.
 
 The duration of model training depends primarily on the following
 parameters:
@@ -159,34 +168,39 @@ Following is a summary of the contents of each output file:
 - `step2_tune_*.rds` — list of XGBoost models from the second stage of
   hyper-parameter tuning,
 
-For example, to analyse the performance in the first cross-validation
-fold of the `CIP` annotation model:
+## Example run
+
+The following block shows the results from the above models (generated
+using `examples/tune_and_train.sh`) for ceftazidime (CAZ), ciprofloxacin
+(CIP), cefepime (FEP), gentamicin (GEN), and meropenem (MEM).
+
+Due to high computational requirements to run $k$-mer models, the tuning
+and training scripts have been modified to **only train annotation
+models** (`tune_annots_only.R` and `train_annots_only.R`). Due to these
+modifications and XGBoost’s stochasticity, the results may differ (very
+slightly) from those in the manuscript.
 
 ``` r
 library(MIC)
-annots_log <- readRDS("output/3/CIP_ea_annots_log.rds")
-ea <- annots_log[["CIP"]]
-print(ea)
-```
+library(AMR)
+antimicrobials <- c("CAZ", "CIP", "FEP", "GEN", "MEM")
+validation_summaries <- lapply(antimicrobials, function(ab) {
+  results <- readRDS(glue::glue("output/3/{ab}_ea_annots_log.rds"))
+  
+  # unpack the list of agreement objects
+  results <- results[[ab]] |>
+    dplyr::bind_rows()
+  
+  # use MIC package to compare MICs
+  compare_mic(as.mic(results$gold_standard),
+              as.mic(results$test))
+})
 
-    $Fold1
-    MIC validation object with 141 observations
-    Agreement type: essential
-    $Fold2
-    MIC validation object with 140 observations
-    Agreement type: essential
-    $Fold3
-    MIC validation object with 140 observations
-    Agreement type: essential
-    $Fold4
-    MIC validation object with 141 observations
-    Agreement type: essential
-    $Fold5
-    MIC validation object with 141 observations
-    Agreement type: essential
-
-``` r
-plot(ea[[1]])
+names(validation_summaries) <- antimicrobials
+plot(validation_summaries$CIP) +
+  ggplot2::ggtitle("Ciprofloxacin annotation model") +
+  ggplot2::xlab("Agar dilution MIC (mg/L)") +
+  ggplot2::ylab("Predicted MIC (mg/L)")
 ```
 
 ![](README_files/figure-commonmark/analyse-1.png)
