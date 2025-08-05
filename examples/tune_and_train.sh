@@ -5,8 +5,8 @@ ANTIBIOTICS=("CAZ" "CIP" "FEP" "GEN" "MEM")
 
 # Loop through each antibiotic value
 for a in "${ANTIBIOTICS[@]}"; do
-    echo "Running tune.R for $a..."
-    Rscript scripts/tune.R \
+    echo "Running tune_annots_only.R for $a..."
+    Rscript scripts/tune_annots_only.R \
         -k 3 \
         -o "output/3/" \
         -a "$a" \
@@ -18,8 +18,8 @@ for a in "${ANTIBIOTICS[@]}"; do
         data/meta_data_bv_brc_format.txt \
         data/kmers/
 
-    echo "Running train.R for $a..."
-    Rscript scripts/train.R \
+    echo "Running train_annots_only.R for $a..."
+    Rscript scripts/train_annots_only.R \
         -k 3 \
         -o "output/3/" \
         -a "$a" \
