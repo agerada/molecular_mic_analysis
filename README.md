@@ -102,7 +102,9 @@ The following scripts are generated:
 
 Both `tune.R` and `train.R` use “flat” cross-validation; however,
 `_nested.R` variants are available that use nested cross-validation,
-which is useful if external validation data is not available.
+which is useful if external validation data is not available (the nested
+variants were not used in this manuscript, as external validation data
+was available).
 
 Furthermore, `tune_annots_only.R` and `train_annots_only.R` restrict
 models to annotation models, which can be useful for quick results, as
@@ -177,8 +179,8 @@ using `examples/tune_and_train.sh`) for ceftazidime (CAZ), ciprofloxacin
 Due to high computational requirements to run $k$-mer models, the tuning
 and training scripts have been modified to **only train annotation
 models** (`tune_annots_only.R` and `train_annots_only.R`). Due to these
-modifications and XGBoost’s stochasticity, the results may differ (very
-slightly) from those in the manuscript.
+modifications and XGBoost’s stochasticity, the results may differ
+(slightly) from those in the manuscript.
 
 ``` r
 library(MIC)
@@ -195,15 +197,51 @@ validation_summaries <- lapply(antimicrobials, function(ab) {
   compare_mic(as.mic(results$gold_standard),
               as.mic(results$test))
 })
-
 names(validation_summaries) <- antimicrobials
-plot(validation_summaries$CIP) +
-  ggplot2::ggtitle("Ciprofloxacin annotation model") +
-  ggplot2::xlab("Agar dilution MIC (mg/L)") +
-  ggplot2::ylab("Predicted MIC (mg/L)")
+
+validation_summaries |>
+  lapply(\(x) {
+    x |>
+      summary() |>
+      as.data.frame()
+  }) |>
+  dplyr::bind_rows(.id = "antimicrobial") |>
+  dplyr::select(-bias) |>
+  dplyr::mutate(antimicrobial = ab_name(antimicrobial),
+                EA_pcent = paste0(round(EA_pcent * 100, 1), "%"))
 ```
 
-![](README_files/figure-commonmark/analyse-1.png)
+      antimicrobial EA_n EA_pcent   n
+    1   Ceftazidime  483      67% 721
+    2 Ciprofloxacin  588    83.6% 703
+    3      Cefepime  468    64.8% 722
+    4    Gentamicin  451    84.8% 532
+    5     Meropenem  624    87.8% 711
+
+``` r
+library(ggplot2)
+# iterate and plot each summary
+for (ab in antimicrobials) {
+  p <- validation_summaries[[ab]] |>
+    droplevels() |>
+    plot() +
+    ggtitle(glue::glue("{ab_name(ab)} annotation model")) +
+    xlab("Agar dilution MIC (mg/L)") +
+    ylab("Predicted MIC (mg/L)")
+  
+  print(p)
+}
+```
+
+![](README_files/figure-commonmark/plot_results-1.png)
+
+![](README_files/figure-commonmark/plot_results-2.png)
+
+![](README_files/figure-commonmark/plot_results-3.png)
+
+![](README_files/figure-commonmark/plot_results-4.png)
+
+![](README_files/figure-commonmark/plot_results-5.png)
 
 ## PGSE
 

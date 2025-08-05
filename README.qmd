@@ -169,7 +169,7 @@ Following is a summary of the contents of each output file:
 The following block shows the results from the above models (generated using `examples/tune_and_train.sh`) for ceftazidime (CAZ), ciprofloxacin (CIP), cefepime (FEP), gentamicin (GEN), and meropenem (MEM). 
 
 Due to high computational requirements to run $k$-mer models, the tuning and training scripts have been modified to __only train annotation models__ (`tune_annots_only.R` and `train_annots_only.R`). Due to these modifications and XGBoost's stochasticity,
-the results may differ (very slightly) from those in the manuscript.
+the results may differ (slightly) from those in the manuscript.
 
 ```{r analyse, eval=TRUE, message=FALSE}
 library(MIC)
@@ -186,12 +186,33 @@ validation_summaries <- lapply(antimicrobials, function(ab) {
   compare_mic(as.mic(results$gold_standard),
               as.mic(results$test))
 })
-
 names(validation_summaries) <- antimicrobials
-plot(validation_summaries$CIP) +
-  ggplot2::ggtitle("Ciprofloxacin annotation model") +
-  ggplot2::xlab("Agar dilution MIC (mg/L)") +
-  ggplot2::ylab("Predicted MIC (mg/L)")
+
+validation_summaries |>
+  lapply(\(x) {
+    x |>
+      summary() |>
+      as.data.frame()
+  }) |>
+  dplyr::bind_rows(.id = "antimicrobial") |>
+  dplyr::select(-bias) |>
+  dplyr::mutate(antimicrobial = ab_name(antimicrobial),
+                EA_pcent = paste0(round(EA_pcent * 100, 1), "%"))
+```
+
+```{r plot_results, eval=TRUE, message=FALSE}
+library(ggplot2)
+# iterate and plot each summary
+for (ab in antimicrobials) {
+  p <- validation_summaries[[ab]] |>
+    droplevels() |>
+    plot() +
+    ggtitle(glue::glue("{ab_name(ab)} annotation model")) +
+    xlab("Agar dilution MIC (mg/L)") +
+    ylab("Predicted MIC (mg/L)")
+  
+  print(p)
+}
 ```
 
 ## PGSE
